@@ -11,7 +11,7 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle____"
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0 ; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
@@ -24,7 +24,6 @@ uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
                                  {200, 200, 200},   // white
                                };
 #define FAVCOLORS sizeof(myFavoriteColors) / 3
-
 
 // BLE stuff
 uint8_t len = 0;
@@ -95,32 +94,65 @@ void setup() {
 /**************************************************************************/
 void loop() {
   static int pattern = 0, lastReading;
+  static bool beenTouched = false, beenBled = false;
+  //static int inputs = 0; // Indicates if we're idle (0), calling (1) or connected (2)  
   static bool gotBleMessage = false;
   int reading = digitalRead(BUTTON);
-  bool buttonPushed = (lastReading == HIGH && reading == LOW);
+  static bool buttonPushed = false;
+  
+  if(!buttonPushed) buttonPushed = (lastReading == HIGH && reading == LOW); // If never pushed, keep checking
+  
   // ble checks are slow. Too many and LED animations won't look good
   // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
-  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
-    (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
-    lastBleCheck = millis();
+  if(!gotBleMessage){
+    if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+      gotBleMessage = (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
+      lastBleCheck = millis();
+    }      
   }
 
-  if( (buttonPushed || gotBleMessage) && !(buttonPushed && gotBleMessage) ){
-    pattern++;
-    if(pattern > ANIMATIONS-1) pattern = 0; // wrap round if too big
+  if(buttonPushed) beenTouched = true;
+  if(gotBleMessage) beenBled = true;
+
+  if(beenTouched && beenBled) {
+    pattern = 2;
     patternInterval = animationSpeed[pattern]; // set speed for this animation
-    Serial.println(patternInterval);
+    //Serial.println("Received");
     wipe();
     resetBrightness();
-    delay(50); // debounce delay      
+  } else if (beenTouched || beenBled) {
+    pattern = 1;
+    patternInterval = animationSpeed[pattern]; // set speed for this animation
+    //Serial.println("Calling");
+    wipe();
+    resetBrightness();
   }
+
+//  // Check if one and only one trigger has been received
+//  if( (buttonPushed || gotBleMessage) && !(buttonPushed && gotBleMessage) ){
+//    pattern = 1;   
+//    inputs = 1;
+////    if(pattern > ANIMATIONS-1) pattern = 0; // wrap round if too big
+//    patternInterval = animationSpeed[pattern]; // set speed for this animation
+//    Serial.println("Calling");
+//    wipe();
+//    resetBrightness();     
+//  //} else if (buttonPushed && gotBleMessage) { {
+//  } else if (inputs > 0  && gotBleMessage) { 
+//    pattern = 2;
+//    inputs = 2;
+//    patternInterval = animationSpeed[pattern]; // set speed for this animation
+//    Serial.println("Received");
+//    wipe();
+//    resetBrightness();        
+//  } 
   
+  delay(50); // debounce delay      
   lastReading = reading; // save for next time
   if(millis() - lastUpdate > patternInterval) { 
     updatePattern(pattern);
   }
 }
-
 
 // Update the animation
 void  updatePattern(int pat){ 
