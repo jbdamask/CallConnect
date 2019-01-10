@@ -11,7 +11,8 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+#define PAYLOAD_LENGTH  4   // Array size of BLE payload
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0 ; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
@@ -24,7 +25,6 @@ uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
                                  {200, 200, 200},   // white
                                };
 #define FAVCOLORS sizeof(myFavoriteColors) / 3
-
 
 // BLE stuff
 uint8_t len = 0;
@@ -40,8 +40,6 @@ void printHex(const uint8_t * data, const uint32_t numBytes);
 
 // the ble packet buffer
 extern uint8_t packetbuffer[];
-// the defined length of a color payload
-int colorLength = 4;
 uint16_t colLen = 3;
 // Payload stuff
 uint8_t xsum = 0;
@@ -51,6 +49,7 @@ uint8_t BUTTON_CODE = "B";
 // the ble payload, set to max buffer size
 uint8_t payload[21];
 
+
 /**************************************************************************/
 /*!
     Setting everything up
@@ -59,6 +58,8 @@ uint8_t payload[21];
 void setup() {
   delay(500);
   Serial.begin(9600);
+  payload[0] = 0x21;
+  payload[1] = 0x42;  
   strip.setBrightness(BRIGHTNESS); // These things are bright!
   strip.begin(); // This initializes the NeoPixel library.
   wipe(); // wipes the LED buffers
@@ -95,32 +96,51 @@ void setup() {
 /**************************************************************************/
 void loop() {
   static int pattern = 0, lastReading;
+  static bool beenTouched = false, beenBled = false;
   static bool gotBleMessage = false;
   int reading = digitalRead(BUTTON);
-  bool buttonPushed = (lastReading == HIGH && reading == LOW);
-  // ble checks are slow. Too many and LED animations won't look good
-  // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
-  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
-    (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
-    lastBleCheck = millis();
-  }
-
-  if( (buttonPushed || gotBleMessage) && !(buttonPushed && gotBleMessage) ){
-    pattern++;
-    if(pattern > ANIMATIONS-1) pattern = 0; // wrap round if too big
-    patternInterval = animationSpeed[pattern]; // set speed for this animation
-    Serial.println(patternInterval);
-    wipe();
-    resetBrightness();
+  static bool buttonPushed = false;
+  
+  if(!buttonPushed) {
+    if(lastReading == HIGH && reading == LOW) buttonPushed = true;
     delay(50); // debounce delay      
   }
   
+  // ble checks are slow. Too many and LED animations won't look good
+  // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
+  if(!gotBleMessage){
+    if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+      gotBleMessage = (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
+      lastBleCheck = millis();
+    }      
+  }
+
+  if(buttonPushed && !beenTouched) {
+    beenTouched = true;
+    // write to ble
+    bleWrite(pattern);
+  }
+  if(gotBleMessage && !beenBled) beenBled = true;
+
+  if(beenTouched && beenBled) {
+    pattern = 2;
+    patternInterval = animationSpeed[pattern]; // set speed for this animation
+    //Serial.println("Received");
+    wipe();
+    resetBrightness();
+  } else if (beenTouched || beenBled) {
+    pattern = 1;
+    patternInterval = animationSpeed[pattern]; // set speed for this animation
+    //Serial.println("Calling");
+    wipe();
+    resetBrightness();
+  }
+
   lastReading = reading; // save for next time
   if(millis() - lastUpdate > patternInterval) { 
     updatePattern(pattern);
   }
 }
-
 
 // Update the animation
 void  updatePattern(int pat){ 
@@ -207,6 +227,19 @@ void wipe(){
 
 void resetBrightness(){
   strip.setBrightness(BRIGHTNESS);
+}
+
+// Sends Bluetooth Low Energy payload
+void bleWrite(int state){
+  payload[2] = state;
+  uint8_t xsum = 0;
+  uint16_t colLen = 3;
+  for (uint8_t i=0; i<colLen; i++) {
+    xsum += payload[i];
+  }
+  xsum = ~xsum;    
+  payload[3] = xsum;
+  ble.write(payload,PAYLOAD_LENGTH);
 }
 
 // A small helper
