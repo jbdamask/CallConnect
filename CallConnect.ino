@@ -1,20 +1,23 @@
+// CallConnect
+// Author: John B Damask
+// Created: January 10, 2019
+#include <Adafruit_NeoPixel.h>
+#include "Adafruit_BluefruitLE_SPI.h"
+#include "BluefruitConfig.h"
 
-// StrandTest from AdaFruit implemented as a state machine
-// pattern change by push button
-// By Mike Cook Jan 2016
-
+#define FACTORYRESET_ENABLE     1
 #define PINforControl   6 // pin connected to the small NeoPixels strip
+#define BUTTON          10
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
-
-#include <Adafruit_NeoPixel.h>
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUMPIXELS1, PINforControl, NEO_GRB + NEO_KHZ800);
-
+#define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 unsigned long patternInterval = 20 ; // time between steps in the pattern
-unsigned long lastUpdate = 0 ; // for millis() when last update occoured
-unsigned long intervals [] = { 20, 20, 50, 100, 2, 50 } ; // speed for each pattern
-const byte button = 10; // pin to connect button switch to between pin and ground
-
+unsigned long lastUpdate = 0 ; // for millis() when last update occurred
+unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
+/* Each animation should have a value in this array */ 
+unsigned long animationSpeed [] = { 100, 50, 1.75 } ; // speed for each animation (order counts!)
+#define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
 // Colors for sparkle
 uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
                                  {200,   0,   0},   // red 
@@ -22,117 +25,129 @@ uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
                                };
 #define FAVCOLORS sizeof(myFavoriteColors) / 3
 
+
+// BLE stuff
+uint8_t len = 0;
+bool printOnceBle = false; // BLE initialization 
+
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUMPIXELS1, PINforControl, NEO_GRB + NEO_KHZ800);
+Adafruit_BluefruitLE_SPI ble(BLUEFRUIT_SPI_CS, BLUEFRUIT_SPI_IRQ, BLUEFRUIT_SPI_RST);
+
+// function prototypes over in packetparser.cpp
+uint8_t readPacket(Adafruit_BLE *ble, uint16_t timeout);
+float parsefloat(uint8_t *buffer);
+void printHex(const uint8_t * data, const uint32_t numBytes);
+
+// the ble packet buffer
+extern uint8_t packetbuffer[];
+// the defined length of a color payload
+int colorLength = 4;
+uint16_t colLen = 3;
+// Payload stuff
+uint8_t xsum = 0;
+uint8_t PAYLOAD_START = "!";
+uint8_t COLOR_CODE = "C";
+uint8_t BUTTON_CODE = "B";
+// the ble payload, set to max buffer size
+uint8_t payload[21];
+
+/**************************************************************************/
+/*!
+    Setting everything up
+*/
+/**************************************************************************/
 void setup() {
+  delay(500);
+  Serial.begin(9600);
   strip.setBrightness(BRIGHTNESS); // These things are bright!
   strip.begin(); // This initializes the NeoPixel library.
   wipe(); // wipes the LED buffers
-  pinMode(button, INPUT_PULLUP); // change pattern button
-}
-
-void loop() {
-  static int pattern = 0, lastReading;
-  int reading = digitalRead(button);
-  if(lastReading == HIGH && reading == LOW){
-    pattern++ ; // change pattern number
-    if(pattern > 5) pattern = 0; // wrap round if too big
-    patternInterval = intervals[pattern]; // set speed for this pattern
-    wipe(); // clear out the buffer 
-    resetBrightness();
-    delay(50); // debounce delay
+  strip.show();
+  pinMode(BUTTON, INPUT_PULLUP); // change pattern button
+  /* Initialise the module */
+  Serial.print(F("Initialising the Bluefruit LE module: "));
+  if ( !ble.begin(VERBOSE_MODE) )
+  {
+    error(F("Couldn't find Bluefruit, make sure it's in CoMmanD mode & check wiring?"));
   }
-  lastReading = reading; // save for next time
+  Serial.println( F("OK!") );
 
-if(millis() - lastUpdate > patternInterval) updatePattern(pattern);
+  if ( FACTORYRESET_ENABLE )
+  {
+    /* Perform a factory reset to make sure everything is in a known state */
+    Serial.println(F("Performing a factory reset: "));
+    if ( ! ble.factoryReset() ){
+      error(F("Couldn't factory reset"));
+    }
+  }
+  // Customize name. THIS IS IMPORTANT SO THAT MY PIHUBs AUTOMATICALLY CONNECT!
+  ble.println(DEVICE_NAME);
+  // Wait until bluetooth connected
+  while (! ble.isConnected()) delay(500);
+  ble.setMode(BLUEFRUIT_MODE_DATA);
 }
 
-void  updatePattern(int pat){ // call the pattern currently being created
+
+/**************************************************************************/
+/*!
+    Action Jackson, baby
+*/
+/**************************************************************************/
+void loop() {
+  static int pattern = 0, lastReading, firstPass = 1;
+  static bool gotBleMessage = false;
+  int reading = digitalRead(BUTTON);
+  bool buttonPushed = (lastReading == HIGH && reading == LOW);
+  // ble checks are slow. Too many and LED animations won't look good
+  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+    (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
+    lastBleCheck = millis();
+  }
+
+  if( (buttonPushed || gotBleMessage) && !(buttonPushed && gotBleMessage) ){
+    if(firstPass) {
+      firstPass = 0;
+      return;
+    }
+    pattern++;
+    if(pattern > ANIMATIONS-1) pattern = 0; // wrap round if too big
+    patternInterval = animationSpeed[pattern]; // set speed for this animation
+    Serial.println(patternInterval);
+    wipe();
+    resetBrightness();
+    delay(50); // debounce delay      
+  }
+  
+  lastReading = reading; // save for next time
+  if(millis() - lastUpdate > patternInterval) { 
+    updatePattern(pattern);
+  }
+}
+
+
+// Update the animation
+void  updatePattern(int pat){ 
   switch(pat) {
     case 0:
-        rainbow(); 
-        break;
+      wipe();
+      strip.show();
+      break;
     case 1: 
-        rainbowCycle();
-        break;
+      wipe();
+      sparkle(3);
+      break;     
     case 2:
-        theaterChaseRainbow(); 
-        break;
-    case 3:
-        colorWipe(strip.Color(255, 0, 0)); // red
-        break;  
-    case 4:
-        breatheBlue();
-        break;   
-    case 5:
-        wipe();
-        sparkle(3);
-        break;
+      breatheBlue();
+      break;
   }  
 }
 
-void rainbow() { // modified from Adafruit example to make it a state machine
-  static uint16_t j=0;
-    for(int i=0; i<strip.numPixels(); i++) {
-      strip.setPixelColor(i, Wheel((i+j) & 255));
-    }
-    strip.show();
-     j++;
-  if(j >= 256) j=0;
-  lastUpdate = millis(); // time for next change to the display
-  
-}
-void rainbowCycle() { // modified from Adafruit example to make it a state machine
-  static uint16_t j=0;
-    for(int i=0; i< strip.numPixels(); i++) {
-      strip.setPixelColor(i, Wheel(((i * 256 / strip.numPixels()) + j) & 255));
-    }
-    strip.show();
-  j++;
-  if(j >= 256*5) j=0;
-  lastUpdate = millis(); // time for next change to the display
-}
-
-void theaterChaseRainbow() { // modified from Adafruit example to make it a state machine
-  static int j=0, q = 0;
-  static boolean on = true;
-     if(on){
-            for (int i=0; i < strip.numPixels(); i=i+3) {
-                strip.setPixelColor(i+q, Wheel( (i+j) % 255));    //turn every third pixel on
-             }
-     }
-      else {
-           for (int i=0; i < strip.numPixels(); i=i+3) {
-               strip.setPixelColor(i+q, 0);        //turn every third pixel off
-                 }
-      }
-     on = !on; // toggel pixelse on or off for next time
-      strip.show(); // display
-      q++; // update the q variable
-      if(q >=3 ){ // if it overflows reset it and update the J variable
-        q=0;
-        j++;
-        if(j >= 256) j = 0;
-      }
-  lastUpdate = millis(); // time for next change to the display    
-}
-
-void colorWipe(uint32_t c) { // modified from Adafruit example to make it a state machine
-  static int i =0;
-    strip.setPixelColor(i, c);
-    strip.show();
-  i++;
-  if(i >= strip.numPixels()){
-    i = 0;
-    wipe(); // blank out strip
-  }
-  lastUpdate = millis(); // time for next change to the display
-}
-
-void breatheBlue() { // modified from Adafruit example to make it a state machine
-  float MaximumBrightness = 30;
-  float SpeedFactor = 0.008; // I don't actually know what would look good
+// LED breathing. Used for when devices are connected to one another
+void breatheBlue() { 
+  float SpeedFactor = 0.008; 
   static int i = 0;
   // Make the lights breathe
-  float intensity = MaximumBrightness /2.0 * (1.0 + sin(SpeedFactor * i));
+  float intensity = BRIGHTNESS /2.0 * (1.0 + sin(SpeedFactor * i));
   strip.setBrightness(intensity);
   for (int j=0; j<strip.numPixels(); j++) {
     strip.setPixelColor(j, 0, 127, 127);
@@ -145,8 +160,8 @@ void breatheBlue() { // modified from Adafruit example to make it a state machin
   lastUpdate = millis();
 }
 
+// LED sparkling. Used for when devices are "calling"
 void sparkle(uint8_t howmany) {
-
   static int x = 0;
   static bool goingUp = true;
   
@@ -185,11 +200,11 @@ void sparkle(uint8_t howmany) {
 }
 
 
-
-void wipe(){ // clear all LEDs
-     for(int i=0;i<strip.numPixels();i++){
-       strip.setPixelColor(i, strip.Color(0,0,0)); 
-       }
+// clear all LEDs
+void wipe(){ 
+   for(int i=0;i<strip.numPixels();i++){
+     strip.setPixelColor(i, strip.Color(0,0,0)); 
+   }
 }
 
 
@@ -197,16 +212,10 @@ void resetBrightness(){
   strip.setBrightness(BRIGHTNESS);
 }
 
-
-uint32_t Wheel(byte WheelPos) {
-  WheelPos = 255 - WheelPos;
-  if(WheelPos < 85) {
-    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-  }
-  if(WheelPos < 170) {
-    WheelPos -= 85;
-    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+// A small helper
+void error(const __FlashStringHelper*err) {
+  Serial.println(err);
+  while (1);
 }
+
+
