@@ -99,6 +99,7 @@ void loop() {
   int reading = digitalRead(BUTTON);
   bool buttonPushed = (lastReading == HIGH && reading == LOW);
   // ble checks are slow. Too many and LED animations won't look good
+  // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
   if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
     (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
     lastBleCheck = millis();
