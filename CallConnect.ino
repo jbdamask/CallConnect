@@ -16,7 +16,7 @@ unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0 ; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
 /* Each animation should have a value in this array */ 
-unsigned long animationSpeed [] = { 100, 50, 1.75 } ; // speed for each animation (order counts!)
+unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
 // Colors for sparkle
 uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
@@ -94,7 +94,7 @@ void setup() {
 */
 /**************************************************************************/
 void loop() {
-  static int pattern = 0, lastReading, firstPass = 1;
+  static int pattern = 0, lastReading;
   static bool gotBleMessage = false;
   int reading = digitalRead(BUTTON);
   bool buttonPushed = (lastReading == HIGH && reading == LOW);
@@ -106,10 +106,6 @@ void loop() {
   }
 
   if( (buttonPushed || gotBleMessage) && !(buttonPushed && gotBleMessage) ){
-    if(firstPass) {
-      firstPass = 0;
-      return;
-    }
     pattern++;
     if(pattern > ANIMATIONS-1) pattern = 0; // wrap round if too big
     patternInterval = animationSpeed[pattern]; // set speed for this animation
