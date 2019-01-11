@@ -11,10 +11,11 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
+#define IDLE_TIMEOUT    5   // Seconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
-unsigned long lastUpdate = 0 ; // for millis() when last update occurred
+unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
 /* Each animation should have a value in this array */ 
 unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
@@ -117,25 +118,37 @@ void loop() {
 
   if(buttonPushed && !beenTouched) {
     beenTouched = true;
-    // write to ble
+    // write to ble so that device on other end is called/connected
     bleWrite(pattern);
   }
   if(gotBleMessage && !beenBled) beenBled = true;
 
-  if(beenTouched && beenBled) {
+  if((beenTouched && beenBled) && pattern < 2) {
     pattern = 2;
     patternInterval = animationSpeed[pattern]; // set speed for this animation
-    //Serial.println("Received");
     wipe();
     resetBrightness();
-  } else if (beenTouched || beenBled) {
+    idleTimer = millis();
+    Serial.println("CONNECTED!");
+  } else if ((beenTouched || beenBled) && !(beenTouched && beenBled) ) {
     pattern = 1;
     patternInterval = animationSpeed[pattern]; // set speed for this animation
-    //Serial.println("Calling");
     wipe();
     resetBrightness();
+    Serial.println("Calling...");
   }
 
+  if(idleTimer > 0 && (millis() - idleTimer > IDLE_TIMEOUT*1000)) { // no action so reset to idle
+    Serial.println("Timeout!");
+    pattern = 0;
+    patternInterval = animationSpeed[pattern]; // set speed for this animation
+    wipe();    
+    idleTimer = 0;
+    beenTouched = false;
+    buttonPushed = false;
+    beenBled = false;
+  }
+  
   lastReading = reading; // save for next time
   if(millis() - lastUpdate > patternInterval) { 
     updatePattern(pattern);
