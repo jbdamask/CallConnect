@@ -97,10 +97,8 @@ void setup() {
 /**************************************************************************/
 void loop() {
   static int pattern = 0, lastReading;
-  static bool beenTouched = false, beenBled = false;
-  static bool gotBleMessage = false;
+  static bool beenTouched = false, beenBled = false, gotBleMessage = false, buttonPushed = false;
   int reading = digitalRead(BUTTON);
-  static bool buttonPushed = false;
   
   if(!buttonPushed) {
     if(lastReading == HIGH && reading == LOW) buttonPushed = true;
@@ -112,15 +110,17 @@ void loop() {
   if(!gotBleMessage){
     if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
       gotBleMessage = (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
+      if(gotBleMessage) Serial.println("ble packet received");
       lastBleCheck = millis();
     }      
   }
 
-  if(buttonPushed && !beenTouched) {
+  if(( buttonPushed && !beenTouched)  ) {
     beenTouched = true;
-    // write to ble so that device on other end is called/connected
-    bleWrite(pattern);
+    // write to ble so that device on other end is called/connected    
+    bleWrite(pattern);    
   }
+  
   if(gotBleMessage && !beenBled) beenBled = true;
 
   if((beenTouched && beenBled) && pattern < 2) {
@@ -147,6 +147,7 @@ void loop() {
     beenTouched = false;
     buttonPushed = false;
     beenBled = false;
+    gotBleMessage = false;
   }
   
   lastReading = reading; // save for next time
