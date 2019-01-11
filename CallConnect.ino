@@ -12,7 +12,7 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
@@ -71,8 +71,6 @@ bool isConnected = false;
 void setup() {
   delay(500);
   Serial.begin(9600);
-  payload[0] = 0x21;
-  payload[1] = 0x42;  
   strip.setBrightness(BRIGHTNESS); // These things are bright!
   strip.begin(); // This initializes the NeoPixel library.
   wipe(); // wipes the LED buffers
@@ -102,6 +100,7 @@ void setup() {
 
   // Create timer that periodically checks connection state
   connectionTimerId = timer.setInterval(10000, checkConnection);
+//  bleWrite(0); // Set initial state to 0 <--------- 1/11/19 this isn't working
 }
 
 /**************************************************************************/
@@ -111,7 +110,7 @@ void setup() {
 /**************************************************************************/
 void loop() {
  // static int pattern = 0;
-  static uint8_t previousState = 0, previousBleState = 0;
+  static uint8_t previousState = -1, previousBleState = 0;
   static bool makingCall = false; // When in state 1, we're either making or receiving a call
   static bool previouslyTouched = false;
   static bool justWokeUp = true;
@@ -120,28 +119,37 @@ void loop() {
   static long countDown = 0;
 
   // Check for BLE message
-  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+ // if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
     blePacketLength = readPacket(&ble, BLE_READPACKET_TIMEOUT); // Read a packet into the buffer
     if(justWokeUp){ // If device just came online, then ignore the first ble notice since this is likely stale
       justWokeUp = false;
       return; // Since we get the BLE message on the first pass (assuming PiHub is online and state exists), we ignore and move to next iteration
     } 
-    lastBleCheck = millis();
+ //   lastBleCheck = millis();
+ // }
+
+  if(previousState != state) {
+    Serial.print("State: "); Serial.println(state);
+    previousState = state;
   }
 
   // The various cases we can face
   switch(state){
     case 0: // Idle
-      if(isTouched() && blePacketLength == 0) {
+      if(isTouched()) {
         state = 1;
         bleWrite(1);
         previouslyTouched = true;
         makingCall = true;
-      } else if (!isTouched() && blePacketLength != 0){
+      } else if (blePacketLength != 0){
+        Serial.println("Got a new ble packet");
         if(payload[2] == 1){
           state = 1;
           previousBleState = 1; // is this needed????
-        }else{
+        }else if(payload[2] == 0){
+          //ignore
+          return;
+        }else {
           Serial.print("Expected payload 1 but got "); Serial.println(payload[2]);
         }
       }
@@ -297,8 +305,13 @@ void checkConnection(){
   
 // Check if button is being pushed
 bool isTouched(){
+    static bool oneTouch = false;
     delay(50); // debounce delay  
-    return (digitalRead(BUTTON) == LOW) ? 1 : 0;
+    if(!oneTouch){
+      oneTouch = (digitalRead(BUTTON) == LOW) ? 1 : 0;
+    }
+    return oneTouch;
+    //return (digitalRead(BUTTON) == LOW) ? 1 : 0;
 }
 
 // Update the animation
@@ -401,7 +414,9 @@ void resetBrightness(){
 }
 
 // Sends Bluetooth Low Energy payload
-void bleWrite(int state){
+void bleWrite(uint8_t state){
+  payload[0] = 0x21;
+  payload[1] = 0x42;  
   payload[2] = state;
   uint8_t xsum = 0;
   uint16_t colLen = 3;
