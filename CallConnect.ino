@@ -12,7 +12,8 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
@@ -143,24 +144,24 @@ void loop() {
         makingCall = true;
       } else if (blePacketLength != 0){
         Serial.println("Got a new ble packet");
-        if(payload[2] == 1){
+        if(packetbuffer[2] == 1){
           state = 1;
           previousBleState = 1; // is this needed????
-        }else if(payload[2] == 0){
+        }else if(packetbuffer[2] == 0){
           //ignore
           return;
         }else {
-          Serial.print("Expected payload 1 but got "); Serial.println(payload[2]);
+          Serial.print("Expected payload 1 but got "); Serial.println(packetbuffer[2]);
         }
       }
       break;
     case 1: // Calling
       if(makingCall){
         if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
-          if(payload[2] == 2){
+          if(packetbuffer[2] == 2){
             state = 2;
           }else{
-            Serial.print("Expected payload 2 but got "); Serial.println(payload[2]);
+            Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
           }
         }
       } else if(isTouched()){  // If we're receiving a call, are now are touching the local device, then we're connected
@@ -175,11 +176,11 @@ void loop() {
         bleWrite(3);
         previouslyTouched = false;
       } else if( blePacketLength != 0 ) {
-        if(payload[2] == 3){
+        if(packetbuffer[2] == 3){
           state = 3;
           previousBleState = 3; // is this needed?????
         }else{
-            Serial.print("Expected payload 3 but got "); Serial.println(payload[2]);
+            Serial.print("Expected payload 3 but got "); Serial.println(packetbuffer[2]);
         }
       }
       if(state == 3) countDown = millis();   // Start the timer
