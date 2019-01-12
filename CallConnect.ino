@@ -13,8 +13,8 @@
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
 #define BUTTON_DEBOUNCE 50  // Removes button noise
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
-//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
@@ -179,7 +179,7 @@ void loop() {
       }
       break;
     case 2:
-      if(!isTouched()){
+      if(isTouched()){
         state = 3;
         bleWrite(3);
         previouslyTouched = false;               
