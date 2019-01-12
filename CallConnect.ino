@@ -147,11 +147,13 @@ void loop() {
         bleWrite(1);
         previouslyTouched = true;
         makingCall = true;
+        idleTimer = millis();
       } else if (blePacketLength != 0){
         Serial.println("Got a new ble packet");
         if(packetbuffer[2] == 1){
           state = 1;
           previousBleState = 1; // is this needed????
+          idleTimer = millis();
         }else if(packetbuffer[2] == 0){
           //ignore
           return;
@@ -163,6 +165,9 @@ void loop() {
       break;
     case 1: // Calling
       if(makingCall){
+        if(millis() - idleTimer > IDLE_TIMEOUT){
+          resetState();
+        }
         if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
           if(packetbuffer[2] == 2){
             state = 2;       
@@ -176,6 +181,10 @@ void loop() {
         state = 2;      
         bleWrite(2);
         previouslyTouched = true;
+      } else if(blePacketLength != 0) {
+        if(packetbuffer[2] == 0){ // This device didn't answer in time so we check to see if we got a timeout signal
+          state = 0;  
+        }
       }
       break;
     case 2:
