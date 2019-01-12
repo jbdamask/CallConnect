@@ -12,6 +12,7 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
+#define BUTTON_DEBOUNCE 50  // Removes button noise
 #define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
 //#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
@@ -34,7 +35,7 @@ uint8_t len = 0;
 bool printOnceBle = false; // BLE initialization 
 
 // Connection state (0 = idle; 1 = calling; 2 = connected)
-uint8_t state = 0;
+uint8_t state = 0, previousState = 0;
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUMPIXELS1, PINforControl, NEO_GRB + NEO_KHZ800);
 Adafruit_BluefruitLE_SPI ble(BLUEFRUIT_SPI_CS, BLUEFRUIT_SPI_IRQ, BLUEFRUIT_SPI_RST);
@@ -52,8 +53,8 @@ uint8_t xsum = 0;
 uint8_t PAYLOAD_START = "!";
 uint8_t COLOR_CODE = "C";
 uint8_t BUTTON_CODE = "B";
-// the ble payload, set to max buffer size
-uint8_t payload[21];
+//// the ble payload, set to max buffer size
+//uint8_t payload[21];
 
 // Main timer object (we can have multiple timers within)
 SimpleTimer timer;
@@ -110,8 +111,8 @@ void setup() {
 */
 /**************************************************************************/
 void loop() {
-  //Serial.print(millis()); Serial.println(": iterating");
-  static uint8_t previousState = -1, previousBleState = 0;
+//  static uint8_t previousState = -1, previousBleState = 0;
+  static uint8_t previousBleState = 0;
   static bool makingCall = false; // When in state 1, we're either making or receiving a call
   static bool previouslyTouched = false;
   static bool justWokeUp = true;
@@ -156,6 +157,7 @@ void loop() {
           return;
         }else {
           Serial.print("Expected payload 1 but got "); Serial.println(packetbuffer[2]);
+          resetState();
         }
       }
       break;
@@ -166,6 +168,8 @@ void loop() {
             state = 2;       
           }else{
             Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
+            Serial.println("Resetting state to 0");
+            resetState();
           }
         }
       } else if(isTouched()){  // If we're receiving a call, are now are touching the local device, then we're connected
@@ -185,14 +189,16 @@ void loop() {
           previousBleState = 3; // is this needed?????                
         }else{
             Serial.print("Expected payload 3 but got "); Serial.println(packetbuffer[2]);
+            resetState();
         }
       }
       if(state == 3) countDown = millis();   // Start the timer
       break;
     case 3:
       if(millis() - countDown > IDLE_TIMEOUT) {
-        state = 0;
-        bleWrite(0);            
+       // state = 0;
+       // bleWrite(0);            
+       resetState();
         // Reset
         previouslyTouched = false; 
         makingCall = false; 
@@ -206,6 +212,9 @@ void loop() {
         previouslyTouched = true;            
       }
       break; 
+    default:
+      resetState();
+      break;
   }
 
   
@@ -214,6 +223,12 @@ void loop() {
     //updatePattern(pattern);
     updatePattern(state);
   }
+}
+
+// Clean house
+void resetState(){
+  state = 0;
+  bleWrite(state);
 }
 
 // Called by SimpleTimer to see if we're still connected
@@ -225,29 +240,43 @@ void checkConnection(){
       state = 3; 
     }
 }
-  
+
 // Check if button is pushed. Toggle on and off for better control while debugging
+// Reworked to remove delay()
 bool isTouched(){
-  static bool oneTouch = false;
-  static bool buttonPushed = false;  
-  static int lastReading;
-  int reading = digitalRead(BUTTON);
-  if(!buttonPushed) {
-    if(lastReading == HIGH && reading == LOW) {
-     // buttonPushed = true;
-      buttonPushed = !buttonPushed; // toggles on and off
-    }
-    delay(50); // debounce delay      
+  unsigned long buttonTimer = 0;
+  static bool lastReading;
+
+  if(digitalRead(BUTTON) == HIGH){   // If button is pushed, reset the debounce timer
+    buttonTimer = millis();
   }
-  lastReading = reading;
-  return buttonPushed;
-  
-//    delay(50); // debounce delay  
-//    if(!oneTouch){
-//      oneTouch = (digitalRead(BUTTON) == LOW) ? 1 : 0;
-//    }
-//    return oneTouch;
+  if(millis() - buttonTimer > BUTTON_DEBOUNCE){
+    Serial.println("Button pushed");
+    return true;
+  }
+
+  return false;
 }
+
+  
+//// Check if button is pushed. Toggle on and off for better control while debugging
+//// NOTE THIS LOGIC ISN"T RIGHT
+//bool isTouched(){
+//  static bool oneTouch = false;
+//  static bool buttonPushed = false;  
+//  static int lastReading;
+//  int reading = digitalRead(BUTTON);
+//
+//  if(lastReading != reading) {
+//    Serial.println("Button state changed");
+//    buttonPushed = !buttonPushed; // toggles true and false
+//    delay(50); // debounce delay   
+//  }
+//
+//  lastReading = reading;
+//  return buttonPushed;
+//
+//}
 
 // Update the animation
 void  updatePattern(int pat){ 
@@ -350,6 +379,9 @@ void resetBrightness(){
 
 // Sends Bluetooth Low Energy payload
 void bleWrite(uint8_t state){
+  Serial.print("Writing state to ble: "); Serial.println(state);
+  // the ble payload, set to max buffer size
+  uint8_t payload[21];  
   payload[0] = 0x21;
   payload[1] = 0x42;  
   payload[2] = state;
