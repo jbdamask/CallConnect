@@ -12,8 +12,8 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
@@ -110,7 +110,7 @@ void setup() {
 */
 /**************************************************************************/
 void loop() {
- // static int pattern = 0;
+  //Serial.print(millis()); Serial.println(": iterating");
   static uint8_t previousState = -1, previousBleState = 0;
   static bool makingCall = false; // When in state 1, we're either making or receiving a call
   static bool previouslyTouched = false;
@@ -205,8 +205,7 @@ void loop() {
         bleWrite(2);
         previouslyTouched = true;            
       }
-      break;
-   
+      break; 
   }
 
   
@@ -216,87 +215,6 @@ void loop() {
     updatePattern(state);
   }
 }
-
-void setState(){
- // static int timerId;
-  switch(state){
-    case 0: // If idle state but we're touched, set to "calling"
-      state = isTouched() ? 1 : 0;
-      break;
-    case 1: // If "calling"
-      state = isTouched() ? 2 : 1;
-      break;
-    case 2:
-      timer.setTimeout(10000, checkConnection);
-      break;
-    case 3:
-      // something here about disconnecting
-    default:
-      state = 0;
-      break;
-  }
-}
-
-//void loop() {
-//  static int pattern = 0, lastReading;
-//  static bool beenTouched = false, beenBled = false, gotBleMessage = false, buttonPushed = false;
-//  int reading = digitalRead(BUTTON);
-//  
-//  if(!buttonPushed) {
-//    if(lastReading == HIGH && reading == LOW) buttonPushed = true;
-//    delay(50); // debounce delay      
-//  }
-//  
-//  // ble checks are slow. Too many and LED animations won't look good
-//  // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
-//  if(!gotBleMessage){
-//    if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
-//      gotBleMessage = (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
-//      if(gotBleMessage) Serial.println("ble packet received");
-//      lastBleCheck = millis();
-//    }      
-//  }
-//
-//  if(( buttonPushed && !beenTouched)  ) {
-//    beenTouched = true;
-//    // write to ble so that device on other end is called/connected    
-//    bleWrite(pattern);    
-//  }
-//  
-//  if(gotBleMessage && !beenBled) beenBled = true;
-//
-//  if((beenTouched && beenBled) && pattern < 2) {
-//    pattern = 2;
-//    patternInterval = animationSpeed[pattern]; // set speed for this animation
-//    wipe();
-//    resetBrightness();
-//    idleTimer = millis();
-//    Serial.println("CONNECTED!");
-//  } else if ((beenTouched || beenBled) && !(beenTouched && beenBled) ) {
-//    pattern = 1;
-//    patternInterval = animationSpeed[pattern]; // set speed for this animation
-//    wipe();
-//    resetBrightness();
-//    Serial.println("Calling...");
-//  }
-//
-//  if(idleTimer > 0 && (millis() - idleTimer > IDLE_TIMEOUT*1000)) { // no action so reset to idle
-//    Serial.println("Timeout!");
-//    pattern = 0;
-//    patternInterval = animationSpeed[pattern]; // set speed for this animation
-//    wipe();    
-//    idleTimer = 0;
-//    beenTouched = false;
-//    buttonPushed = false;
-//    beenBled = false;
-//    gotBleMessage = false;
-//  }
-//  
-//  lastReading = reading; // save for next time
-//  if(millis() - lastUpdate > patternInterval) { 
-//    updatePattern(pattern);
-//  }
-//}
 
 // Called by SimpleTimer to see if we're still connected
 // This will be called once at the end of a timeout period.
@@ -308,15 +226,27 @@ void checkConnection(){
     }
 }
   
-// Check if button is being pushed
+// Check if button is pushed. Toggle on and off for better control while debugging
 bool isTouched(){
-    static bool oneTouch = false;
-    delay(50); // debounce delay  
-    if(!oneTouch){
-      oneTouch = (digitalRead(BUTTON) == LOW) ? 1 : 0;
+  static bool oneTouch = false;
+  static bool buttonPushed = false;  
+  static int lastReading;
+  int reading = digitalRead(BUTTON);
+  if(!buttonPushed) {
+    if(lastReading == HIGH && reading == LOW) {
+     // buttonPushed = true;
+      buttonPushed = !buttonPushed; // toggles on and off
     }
-    return oneTouch;
-    //return (digitalRead(BUTTON) == LOW) ? 1 : 0;
+    delay(50); // debounce delay      
+  }
+  lastReading = reading;
+  return buttonPushed;
+  
+//    delay(50); // debounce delay  
+//    if(!oneTouch){
+//      oneTouch = (digitalRead(BUTTON) == LOW) ? 1 : 0;
+//    }
+//    return oneTouch;
 }
 
 // Update the animation
