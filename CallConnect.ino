@@ -120,18 +120,22 @@ void loop() {
   static long countDown = 0;
 
   // Check for BLE message
- // if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
     blePacketLength = readPacket(&ble, BLE_READPACKET_TIMEOUT); // Read a packet into the buffer
     if(justWokeUp){ // If device just came online, then ignore the first ble notice since this is likely stale
       justWokeUp = false;
       return; // Since we get the BLE message on the first pass (assuming PiHub is online and state exists), we ignore and move to next iteration
     } 
- //   lastBleCheck = millis();
- // }
+    lastBleCheck = millis();
+  }
 
+/* Change animation speed if state changed */ 
   if(previousState != state) {
-    Serial.print("State: "); Serial.println(state);
+    wipe();
+    resetBrightness();
+    patternInterval = animationSpeed[state]; // set speed for this animation    
     previousState = state;
+    Serial.print("Animation speed for state: "); Serial.print(state); Serial.print(" is "); Serial.println(patternInterval);
   }
 
   // The various cases we can face
@@ -159,13 +163,13 @@ void loop() {
       if(makingCall){
         if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
           if(packetbuffer[2] == 2){
-            state = 2;
+            state = 2;       
           }else{
             Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
           }
         }
       } else if(isTouched()){  // If we're receiving a call, are now are touching the local device, then we're connected
-        state = 2;
+        state = 2;      
         bleWrite(2);
         previouslyTouched = true;
       }
@@ -174,11 +178,11 @@ void loop() {
       if(!isTouched()){
         state = 3;
         bleWrite(3);
-        previouslyTouched = false;
+        previouslyTouched = false;               
       } else if( blePacketLength != 0 ) {
         if(packetbuffer[2] == 3){
           state = 3;
-          previousBleState = 3; // is this needed?????
+          previousBleState = 3; // is this needed?????                
         }else{
             Serial.print("Expected payload 3 but got "); Serial.println(packetbuffer[2]);
         }
@@ -188,18 +192,18 @@ void loop() {
     case 3:
       if(millis() - countDown > IDLE_TIMEOUT) {
         state = 0;
-        bleWrite(0);
+        bleWrite(0);            
         // Reset
         previouslyTouched = false; 
         makingCall = false; 
         bleReceived = false; 
         previousState = 0; 
-        previousBleState = 0;
+        previousBleState = 0;       
       }
       if(isTouched() && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
         state = 2;
         bleWrite(2);
-        previouslyTouched = true;
+        previouslyTouched = true;            
       }
       break;
    
