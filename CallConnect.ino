@@ -13,13 +13,14 @@
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
 #define BUTTON_DEBOUNCE 50  // Removes button noise
-//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
+bool makingCall = false; // When in state 1, we're either making or receiving a call
 /* Each animation should have a value in this array */ 
 unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
@@ -113,7 +114,6 @@ void setup() {
 void loop() {
 //  static uint8_t previousState = -1, previousBleState = 0;
   static uint8_t previousBleState = 0;
-  static bool makingCall = false; // When in state 1, we're either making or receiving a call
   static bool previouslyTouched = false;
   static bool justWokeUp = true;
   static bool bleReceived = false;
@@ -237,6 +237,7 @@ void loop() {
 // Clean house
 void resetState(){
   state = 0;
+  makingCall = false;
   bleWrite(state);
 }
 
