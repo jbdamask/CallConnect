@@ -165,7 +165,7 @@ void loop() {
         makingCall = true;
         idleTimer = millis();
       } else if (blePacketLength != 0){
-        Serial.println("Got a new ble packet");
+        Serial.print("Idle state, received ble: "); Serial.println(packetbuffer[2]);
         if(packetbuffer[2] == 1){
           state = 1;
           previousBleState = 1; // is this needed????
@@ -181,11 +181,10 @@ void loop() {
       break;
     case 1: // Calling
       if(makingCall){
-        if(!toldUs) {
+        if(!toldUs) { // This is used to print once to the console
           Serial.println("I'm making the call");
           toldUs = true;          
         }
-
         if(millis() - idleTimer > IDLE_TIMEOUT){
           resetState();       // If no answer, we reset
           Serial.println("No one answered :-(");
@@ -205,6 +204,7 @@ void loop() {
         bleWrite(2);
         previouslyTouched = true;
       } else if(blePacketLength != 0) {
+        Serial.println("Receiving call");
         if(packetbuffer[2] == 0){ // This device didn't answer in time so we check to see if we got a timeout signal
           state = 0;  
         }
