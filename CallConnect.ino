@@ -12,7 +12,7 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define BUTTON_DEBOUNCE 50UL  // Removes button noise
+#define BUTTON_DEBOUNCE 50  // Removes button noise
 #define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
 //#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
@@ -21,8 +21,9 @@ bool makingCall = false;
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
+unsigned long buttonTimer = 0;  // Used to debounce
 /* Each animation should have a value in this array */ 
-unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
+unsigned long animationSpeed [] = { 100, 50, 2, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
 // Colors for sparkle
 uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
@@ -264,7 +265,7 @@ void checkConnection(){
 // Check if button is pushed. Toggle on and off for better control while debugging
 // Reworked to remove delay()
 bool isTouched(){
-  static unsigned long buttonTimer = 0;
+  //unsigned long buttonTimer = 0;
   static int lastReading;
   static bool buttonPushed = false;
   int reading = digitalRead(BUTTON);
