@@ -12,15 +12,15 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
-#define BUTTON_DEBOUNCE 50  // Removes button noise
+#define BUTTON_DEBOUNCE 50UL  // Removes button noise
 #define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
 //#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
+bool makingCall = false;
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
-bool makingCall = false; // When in state 1, we're either making or receiving a call
 /* Each animation should have a value in this array */ 
 unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
@@ -104,6 +104,8 @@ void setup() {
   // Create timer that periodically checks connection state
   connectionTimerId = timer.setInterval(10000, checkConnection);
 //  bleWrite(0); // Set initial state to 0 <--------- 1/11/19 this isn't working
+  resetState(); // Clear state
+  Serial.println("Ending setup...moving on to main loop");
 }
 
 /**************************************************************************/
@@ -119,6 +121,7 @@ void loop() {
   static bool bleReceived = false;
   int blePacketLength;
   static long countDown = 0;
+  bool static toldUs = false; // When in state 1, we're either making or receiving a call  
 
   // Check for BLE message
   if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
@@ -165,12 +168,19 @@ void loop() {
       break;
     case 1: // Calling
       if(makingCall){
+        if(!toldUs) {
+          Serial.println("I'm making the call");
+          toldUs = true;          
+        }
+
         if(millis() - idleTimer > IDLE_TIMEOUT){
-          resetState();
+          resetState();       // If no answer, we reset
+          Serial.println("No one answered :-(");
         }
         if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
           if(packetbuffer[2] == 2){
             state = 2;       
+            previousBleState = 3; // Is this needed?
           }else{
             Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
             Serial.println("Resetting state to 0");
@@ -188,7 +198,7 @@ void loop() {
       }
       break;
     case 2:
-      if(isTouched()){
+      if(isTouched()){    // Touch again to disconnect
         state = 3;
         bleWrite(3);
         previouslyTouched = false;               
@@ -254,17 +264,26 @@ void checkConnection(){
 // Check if button is pushed. Toggle on and off for better control while debugging
 // Reworked to remove delay()
 bool isTouched(){
-  unsigned long buttonTimer = 0;
-  static bool lastReading;
-
-  if(digitalRead(BUTTON) == HIGH){   // If button is pushed, reset the debounce timer
-    buttonTimer = millis();
+  static unsigned long buttonTimer = 0;
+  static int lastReading;
+  static bool buttonPushed = false;
+  int reading = digitalRead(BUTTON);
+  if(!buttonPushed){
+    if(lastReading == HIGH && reading == LOW){   // If button is pushed, reset the debounce timer
+      Serial.println("Button pushed");
+      buttonTimer = millis();
+      Serial.println(buttonTimer);
+      buttonPushed = true;
+    }
   }
-  if(millis() - buttonTimer > BUTTON_DEBOUNCE){
-    Serial.println("Button pushed");
+
+  if(buttonTimer > 0 && (millis() - buttonTimer > BUTTON_DEBOUNCE)) {
+    Serial.println("Debounce timer elapsed. isTouched() returning true");
+//    buttonPushed = false;
     return true;
-  }
+  }  
 
+  lastReading = reading;
   return false;
 }
 
@@ -390,6 +409,7 @@ void resetBrightness(){
 // Sends Bluetooth Low Energy payload
 void bleWrite(uint8_t state){
   Serial.print("Writing state to ble: "); Serial.println(state);
+  delay(10);
   // the ble payload, set to max buffer size
   uint8_t payload[21];  
   payload[0] = 0x21;
