@@ -1,6 +1,8 @@
 // CallConnect
 // Author: John B Damask
 // Created: January 10, 2019
+#include <AceButton.h>
+using namespace ace_button;
 #include <Adafruit_NeoPixel.h>
 #include "Adafruit_BluefruitLE_SPI.h"
 #include "BluefruitConfig.h"
@@ -21,7 +23,7 @@ bool makingCall = false;
 unsigned long patternInterval = 20 ; // time between steps in the pattern
 unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
-unsigned long buttonTimer = 0;  // Used to debounce
+//unsigned long buttonTimer = 0;  // Used to debounce
 /* Each animation should have a value in this array */ 
 unsigned long animationSpeed [] = { 100, 50, 2, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
@@ -64,8 +66,10 @@ int connectionTimerId;
 // Manages connection state
 bool isConnected = false;
 
-// Button reading
-//int reading;
+/* Button stuff */
+AceButton button(BUTTON);
+void handleEvent(AceButton*, uint8_t, uint8_t);
+bool isTouched = false;
 
 /**************************************************************************/
 /*!
@@ -75,6 +79,7 @@ bool isConnected = false;
 void setup() {
   delay(500);
   Serial.begin(9600);
+  button.setEventHandler(handleEvent);    
   strip.setBrightness(BRIGHTNESS); // These things are bright!
   strip.begin(); // This initializes the NeoPixel library.
   wipe(); // wipes the LED buffers
@@ -124,6 +129,11 @@ void loop() {
   static long countDown = 0;
   bool static toldUs = false; // When in state 1, we're either making or receiving a call  
 
+  isTouched = false; // I think we reset this on each iteration. It's global because ActionButton event needs to access it
+
+  // Check if button was clicked. If so, a global variable will be set
+  button.check();
+
   // Check for BLE message
   if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
     blePacketLength = readPacket(&ble, BLE_READPACKET_TIMEOUT); // Read a packet into the buffer
@@ -143,10 +153,12 @@ void loop() {
     Serial.print("Animation speed for state: "); Serial.print(state); Serial.print(" is "); Serial.println(patternInterval);
   }
 
+
+
   // The various cases we can face
   switch(state){
     case 0: // Idle
-      if(isTouched()) {
+      if(isTouched) {
         state = 1;
         bleWrite(1);
         previouslyTouched = true;
@@ -188,7 +200,7 @@ void loop() {
             resetState();
           }
         }
-      } else if(isTouched()){  // If we're receiving a call, are now are touching the local device, then we're connected
+      } else if(isTouched){  // If we're receiving a call, are now are touching the local device, then we're connected
         state = 2;      
         bleWrite(2);
         previouslyTouched = true;
@@ -199,7 +211,7 @@ void loop() {
       }
       break;
     case 2:
-      if(isTouched()){    // Touch again to disconnect
+      if(isTouched){    // Touch again to disconnect
         state = 3;
         bleWrite(3);
         previouslyTouched = false;               
@@ -226,7 +238,7 @@ void loop() {
         previousState = 0; 
         previousBleState = 0;       
       }
-      if(isTouched() && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
+      if(isTouched && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
         state = 2;
         bleWrite(2);
         previouslyTouched = true;            
@@ -245,6 +257,18 @@ void loop() {
   }
 }
 
+
+void handleEvent(AceButton* /* button */, uint8_t eventType,
+    uint8_t /* buttonState */) {
+  switch (eventType) {
+    case AceButton::kEventPressed:
+      isTouched = true;
+      Serial.println("Button pushed");
+      break;
+  }
+}
+
+
 // Clean house
 void resetState(){
   state = 0;
@@ -257,36 +281,31 @@ void resetState(){
 // If not touched we switch to a "disconnecting" animation
 // (note that I need to change to state 3 if the other person stops touhing too....is this really different logic????
 void checkConnection(){  
-    if(!isTouched()) {
+    if(!isTouched) {
       state = 3; 
     }
 }
 
 // Check if button is pushed. Toggle on and off for better control while debugging
 // Reworked to remove delay()
-bool isTouched(){
-  //unsigned long buttonTimer = 0;
-  static int lastReading;
-  static bool buttonPushed = false;
-  int reading = digitalRead(BUTTON);
-  if(!buttonPushed){
-    if(lastReading == HIGH && reading == LOW){   // If button is pushed, reset the debounce timer
-      Serial.println("Button pushed");
-      buttonTimer = millis();
-      Serial.println(buttonTimer);
-      buttonPushed = true;
-    }
-  }
+//bool isTouched(){
+//  static unsigned long buttonTimer = 0;
+//  static bool realClick = true; // Default to true. 
+//  static int lastReading;
+//  int reading = digitalRead(BUTTON);
+//
+//  if(lastReading == HIGH && reading == LOW){
+//    buttonTimer = millis();
+//    realClick = false;
+//  }
+//  if(!realClick && (millis() - buttonTimer > BUTTON_DEBOUNCE)){
+//    realClick = true;
+//    return true;
+//  }
+//  lastReading = reading;
+//  return false;
 
-  if(buttonTimer > 0 && (millis() - buttonTimer > BUTTON_DEBOUNCE)) {
-    Serial.println("Debounce timer elapsed. isTouched() returning true");
-//    buttonPushed = false;
-    return true;
-  }  
-
-  lastReading = reading;
-  return false;
-}
+//}
 
   
 //// Check if button is pushed. Toggle on and off for better control while debugging
