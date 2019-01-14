@@ -1,9 +1,12 @@
 // CallConnect
 // Author: John B Damask
 // Created: January 10, 2019
+#include <AceButton.h>
+using namespace ace_button;
 #include <Adafruit_NeoPixel.h>
 #include "Adafruit_BluefruitLE_SPI.h"
 #include "BluefruitConfig.h"
+#include "SimpleTimer.h"
 
 #define FACTORYRESET_ENABLE     1
 #define PINforControl   6 // pin connected to the small NeoPixels strip
@@ -11,13 +14,18 @@
 #define NUMPIXELS1      13 // number of LEDs on strip
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
+#define BUTTON_DEBOUNCE 50  // Removes button noise
 #define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
+bool makingCall = false;
+#define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
 unsigned long patternInterval = 20 ; // time between steps in the pattern
-unsigned long lastUpdate = 0 ; // for millis() when last update occurred
+unsigned long lastUpdate = 0, idleTimer = 0; // for millis() when last update occurred
 unsigned long lastBleCheck = 0; // for millis() when last ble check occurred
+//unsigned long buttonTimer = 0;  // Used to debounce
 /* Each animation should have a value in this array */ 
-unsigned long animationSpeed [] = { 100, 50, 2 } ; // speed for each animation (order counts!)
+unsigned long animationSpeed [] = { 100, 50, 2, 2 } ; // speed for each animation (order counts!)
 #define ANIMATIONS sizeof(animationSpeed) / sizeof(animationSpeed[0])
 // Colors for sparkle
 uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
@@ -29,6 +37,9 @@ uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
 // BLE stuff
 uint8_t len = 0;
 bool printOnceBle = false; // BLE initialization 
+
+// Connection state (0 = idle; 1 = calling; 2 = connected)
+uint8_t state = 0, previousState = 0;
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUMPIXELS1, PINforControl, NEO_GRB + NEO_KHZ800);
 Adafruit_BluefruitLE_SPI ble(BLUEFRUIT_SPI_CS, BLUEFRUIT_SPI_IRQ, BLUEFRUIT_SPI_RST);
@@ -46,9 +57,19 @@ uint8_t xsum = 0;
 uint8_t PAYLOAD_START = "!";
 uint8_t COLOR_CODE = "C";
 uint8_t BUTTON_CODE = "B";
-// the ble payload, set to max buffer size
-uint8_t payload[21];
+//// the ble payload, set to max buffer size
+//uint8_t payload[21];
 
+// Main timer object (we can have multiple timers within)
+SimpleTimer timer;
+int connectionTimerId;
+// Manages connection state
+bool isConnected = false;
+
+/* Button stuff */
+AceButton button(BUTTON);
+void handleEvent(AceButton*, uint8_t, uint8_t);
+bool isTouched = false;
 
 /**************************************************************************/
 /*!
@@ -58,8 +79,7 @@ uint8_t payload[21];
 void setup() {
   delay(500);
   Serial.begin(9600);
-  payload[0] = 0x21;
-  payload[1] = 0x42;  
+  button.setEventHandler(handleEvent);    
   strip.setBrightness(BRIGHTNESS); // These things are bright!
   strip.begin(); // This initializes the NeoPixel library.
   wipe(); // wipes the LED buffers
@@ -86,8 +106,13 @@ void setup() {
   // Wait until bluetooth connected
   while (! ble.isConnected()) delay(500);
   ble.setMode(BLUEFRUIT_MODE_DATA);
-}
 
+  // Create timer that periodically checks connection state
+  connectionTimerId = timer.setInterval(10000, checkConnection);
+//  bleWrite(0); // Set initial state to 0 <--------- 1/11/19 this isn't working
+  resetState(); // Clear state
+  Serial.println("Ending setup...moving on to main loop");
+}
 
 /**************************************************************************/
 /*!
@@ -95,52 +120,212 @@ void setup() {
 */
 /**************************************************************************/
 void loop() {
-  static int pattern = 0, lastReading;
-  static bool beenTouched = false, beenBled = false;
-  static bool gotBleMessage = false;
-  int reading = digitalRead(BUTTON);
-  static bool buttonPushed = false;
-  
-  if(!buttonPushed) {
-    if(lastReading == HIGH && reading == LOW) buttonPushed = true;
-    delay(50); // debounce delay      
-  }
-  
-  // ble checks are slow. Too many and LED animations won't look good
-  // The BLE_READPACKET_TIMEOUT in BluefruitConfig.h is set to 50 ms by default. May need tweaking
-  if(!gotBleMessage){
-    if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
-      gotBleMessage = (readPacket(&ble, BLE_READPACKET_TIMEOUT) != 0) ? 1 : 0;
-      lastBleCheck = millis();
-    }      
+//  static uint8_t previousState = -1, previousBleState = 0;
+  static uint8_t previousBleState = 0;
+  static bool previouslyTouched = false;
+  static bool justWokeUp = true;
+  static bool bleReceived = false;
+  int blePacketLength;
+  static long countDown = 0;
+  bool static toldUs = false; // When in state 1, we're either making or receiving a call  
+
+  isTouched = false; // I think we reset this on each iteration. It's global because ActionButton event needs to access it
+
+  // Check if button was clicked. If so, a global variable will be set
+  button.check();
+
+  // Check for BLE message
+  if(millis() - lastBleCheck > BLE_CHECK_INTERVAL) {
+    blePacketLength = readPacket(&ble, BLE_READPACKET_TIMEOUT); // Read a packet into the buffer
+    if(justWokeUp){ // If device just came online, then ignore the first ble notice since this is likely stale
+      justWokeUp = false;
+      return; // Since we get the BLE message on the first pass (assuming PiHub is online and state exists), we ignore and move to next iteration
+    } 
+    lastBleCheck = millis();
   }
 
-  if(buttonPushed && !beenTouched) {
-    beenTouched = true;
-    // write to ble
-    bleWrite(pattern);
-  }
-  if(gotBleMessage && !beenBled) beenBled = true;
-
-  if(beenTouched && beenBled) {
-    pattern = 2;
-    patternInterval = animationSpeed[pattern]; // set speed for this animation
-    //Serial.println("Received");
+/* Change animation speed if state changed */ 
+  if(previousState != state) {
     wipe();
     resetBrightness();
-  } else if (beenTouched || beenBled) {
-    pattern = 1;
-    patternInterval = animationSpeed[pattern]; // set speed for this animation
-    //Serial.println("Calling");
-    wipe();
-    resetBrightness();
+    patternInterval = animationSpeed[state]; // set speed for this animation    
+    previousState = state;
+    Serial.print("Animation speed for state: "); Serial.print(state); Serial.print(" is "); Serial.println(patternInterval);
   }
 
-  lastReading = reading; // save for next time
+
+
+  // The various cases we can face
+  switch(state){
+    case 0: // Idle
+      if(isTouched) {
+        state = 1;
+        bleWrite(1);
+        previouslyTouched = true;
+        makingCall = true;
+        idleTimer = millis();
+      } else if (blePacketLength != 0){
+        Serial.print("Idle state, received ble: "); Serial.println(packetbuffer[2]);
+        if(packetbuffer[2] == 1){
+          state = 1;
+          previousBleState = 1; // is this needed????
+          idleTimer = millis();
+        }else if(packetbuffer[2] == 0){
+          //ignore
+          return;
+        }else {
+          Serial.print("Expected payload 1 but got "); Serial.println(packetbuffer[2]);
+          resetState();
+        }
+      }
+      break;
+    case 1: // Calling
+      if(makingCall){
+        if(!toldUs) { // This is used to print once to the console
+          Serial.println("I'm making the call");
+          toldUs = true;          
+        }
+        if(millis() - idleTimer > IDLE_TIMEOUT){
+          resetState();       // If no answer, we reset
+          Serial.println("No one answered :-(");
+        }
+        if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
+          if(packetbuffer[2] == 2){
+            state = 2;       
+            previousBleState = 3; // Is this needed?
+          }else{
+            Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
+            Serial.println("Resetting state to 0");
+            resetState();
+          }
+        }
+      } else if(isTouched){  // If we're receiving a call, are now are touching the local device, then we're connected
+        state = 2;      
+        bleWrite(2);
+        previouslyTouched = true;
+      } else if(blePacketLength != 0) {
+        Serial.println("Receiving call");
+        if(packetbuffer[2] == 0){ // This device didn't answer in time so we check to see if we got a timeout signal
+          state = 0;  
+        }
+      }
+      break;
+    case 2:
+      if(isTouched){    // Touch again to disconnect
+        state = 3;
+        bleWrite(3);
+        previouslyTouched = false;               
+      } else if( blePacketLength != 0 ) {
+        if(packetbuffer[2] == 3){
+          state = 3;
+          previousBleState = 3; // is this needed?????                
+        }else{
+            Serial.print("Expected payload 3 but got "); Serial.println(packetbuffer[2]);
+            resetState();
+        }
+      }
+      if(state == 3) countDown = millis();   // Start the timer
+      break;
+    case 3:
+      if(millis() - countDown > IDLE_TIMEOUT) {
+       // state = 0;
+       // bleWrite(0);            
+       resetState();
+        // Reset
+        previouslyTouched = false; 
+        makingCall = false; 
+        bleReceived = false; 
+        previousState = 0; 
+        previousBleState = 0;       
+      }
+      if(isTouched && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
+        state = 2;
+        bleWrite(2);
+        previouslyTouched = true;            
+      }
+      break; 
+    default:
+      resetState();
+      break;
+  }
+
+  
+  // Update animation frame
   if(millis() - lastUpdate > patternInterval) { 
-    updatePattern(pattern);
+    //updatePattern(pattern);
+    updatePattern(state);
   }
 }
+
+
+void handleEvent(AceButton* /* button */, uint8_t eventType,
+    uint8_t /* buttonState */) {
+  switch (eventType) {
+    case AceButton::kEventPressed:
+      isTouched = true;
+      Serial.println("Button pushed");
+      break;
+  }
+}
+
+
+// Clean house
+void resetState(){
+  state = 0;
+  makingCall = false;
+  bleWrite(state);
+}
+
+// Called by SimpleTimer to see if we're still connected
+// This will be called once at the end of a timeout period.
+// If not touched we switch to a "disconnecting" animation
+// (note that I need to change to state 3 if the other person stops touhing too....is this really different logic????
+void checkConnection(){  
+    if(!isTouched) {
+      state = 3; 
+    }
+}
+
+// Check if button is pushed. Toggle on and off for better control while debugging
+// Reworked to remove delay()
+//bool isTouched(){
+//  static unsigned long buttonTimer = 0;
+//  static bool realClick = true; // Default to true. 
+//  static int lastReading;
+//  int reading = digitalRead(BUTTON);
+//
+//  if(lastReading == HIGH && reading == LOW){
+//    buttonTimer = millis();
+//    realClick = false;
+//  }
+//  if(!realClick && (millis() - buttonTimer > BUTTON_DEBOUNCE)){
+//    realClick = true;
+//    return true;
+//  }
+//  lastReading = reading;
+//  return false;
+
+//}
+
+  
+//// Check if button is pushed. Toggle on and off for better control while debugging
+//// NOTE THIS LOGIC ISN"T RIGHT
+//bool isTouched(){
+//  static bool oneTouch = false;
+//  static bool buttonPushed = false;  
+//  static int lastReading;
+//  int reading = digitalRead(BUTTON);
+//
+//  if(lastReading != reading) {
+//    Serial.println("Button state changed");
+//    buttonPushed = !buttonPushed; // toggles true and false
+//    delay(50); // debounce delay   
+//  }
+//
+//  lastReading = reading;
+//  return buttonPushed;
+//
+//}
 
 // Update the animation
 void  updatePattern(int pat){ 
@@ -154,20 +339,32 @@ void  updatePattern(int pat){
       sparkle(3);
       break;     
     case 2:
-      breatheBlue();
+      breathe(1); // Breath blue
+      break;
+    case 3:
+      breathe(2); // Breathe red
       break;
   }  
 }
 
 // LED breathing. Used for when devices are connected to one another
-void breatheBlue() { 
+void breathe(int x) { 
   float SpeedFactor = 0.008; 
   static int i = 0;
+  static int r,g,b;
+  switch(x){
+    case 1:
+      r = 0; g = 127; b = 127;
+      break;
+    case 2:
+      r = 255; g = 0; b = 0;
+      break;
+  }
   // Make the lights breathe
   float intensity = BRIGHTNESS /2.0 * (1.0 + sin(SpeedFactor * i));
   strip.setBrightness(intensity);
   for (int j=0; j<strip.numPixels(); j++) {
-    strip.setPixelColor(j, 0, 127, 127);
+    strip.setPixelColor(j, r, g, b);
   }
   strip.show();
   i++;
@@ -230,7 +427,13 @@ void resetBrightness(){
 }
 
 // Sends Bluetooth Low Energy payload
-void bleWrite(int state){
+void bleWrite(uint8_t state){
+  Serial.print("Writing state to ble: "); Serial.println(state);
+  delay(10);
+  // the ble payload, set to max buffer size
+  uint8_t payload[21];  
+  payload[0] = 0x21;
+  payload[1] = 0x42;  
   payload[2] = state;
   uint8_t xsum = 0;
   uint16_t colLen = 3;
@@ -239,7 +442,7 @@ void bleWrite(int state){
   }
   xsum = ~xsum;    
   payload[3] = xsum;
-  ble.write(payload,PAYLOAD_LENGTH);
+  ble.write(payload, PAYLOAD_LENGTH);
 }
 
 // A small helper
