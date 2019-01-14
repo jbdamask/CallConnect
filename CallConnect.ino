@@ -15,8 +15,8 @@ using namespace ace_button;
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
 #define BUTTON_DEBOUNCE 50  // Removes button noise
-//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 bool makingCall = false;
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
@@ -37,6 +37,7 @@ uint8_t myFavoriteColors[][3] = {{200,   0, 200},   // purple
 // BLE stuff
 uint8_t len = 0;
 bool printOnceBle = false; // BLE initialization 
+uint8_t previousBleState = 0;
 
 // Connection state (0 = idle; 1 = calling; 2 = connected)
 uint8_t state = 0, previousState = 0;
@@ -70,6 +71,7 @@ bool isConnected = false;
 AceButton button(BUTTON);
 void handleEvent(AceButton*, uint8_t, uint8_t);
 bool isTouched = false;
+bool previouslyTouched = false;
 
 /**************************************************************************/
 /*!
@@ -121,8 +123,6 @@ void setup() {
 /**************************************************************************/
 void loop() {
 //  static uint8_t previousState = -1, previousBleState = 0;
-  static uint8_t previousBleState = 0;
-  static bool previouslyTouched = false;
   static bool justWokeUp = true;
   static bool bleReceived = false;
   int blePacketLength;
@@ -146,6 +146,7 @@ void loop() {
 
 /* Change animation speed if state changed */ 
   if(previousState != state) {
+    Serial.print(DEVICE_NAME); Serial.println(": State change");
     wipe();
     resetBrightness();
     patternInterval = animationSpeed[state]; // set speed for this animation    
@@ -159,13 +160,14 @@ void loop() {
   switch(state){
     case 0: // Idle
       if(isTouched) {
+        Serial.println("State 0. Button pushed. Moving to State 1");
         state = 1;
         bleWrite(1);
         previouslyTouched = true;
         makingCall = true;
         idleTimer = millis();
       } else if (blePacketLength != 0){
-        Serial.print("Idle state, received ble: "); Serial.println(packetbuffer[2]);
+        Serial.print("State 0. Received BLE. Moving to State "); Serial.println(packetbuffer[2]);
         if(packetbuffer[2] == 1){
           state = 1;
           previousBleState = 1; // is this needed????
@@ -173,7 +175,7 @@ void loop() {
         }else if(packetbuffer[2] == 0){
           //ignore
           return;
-        }else {
+        } else {
           Serial.print("Expected payload 1 but got "); Serial.println(packetbuffer[2]);
           resetState();
         }
@@ -191,6 +193,7 @@ void loop() {
         }
         if(blePacketLength != 0 && previousBleState != 1){ // Our call has been answered. We're now connected
           if(packetbuffer[2] == 2){
+            Serial.print("State 1: Received BLE. Moving to State "); Serial.println(packetbuffer[2]);
             state = 2;       
             previousBleState = 3; // Is this needed?
           }else{
@@ -200,6 +203,7 @@ void loop() {
           }
         }
       } else if(isTouched){  // If we're receiving a call, are now are touching the local device, then we're connected
+        Serial.println("State 1. Button pushed. Moving to State 2");        
         state = 2;      
         bleWrite(2);
         previouslyTouched = true;
@@ -212,11 +216,13 @@ void loop() {
       break;
     case 2:
       if(isTouched){    // Touch again to disconnect
+        Serial.println("State 2. Button pushed. Moving to State 3");
         state = 3;
         bleWrite(3);
         previouslyTouched = false;               
       } else if( blePacketLength != 0 ) {
         if(packetbuffer[2] == 3){
+          Serial.print("State 2. Received BLE. Moving to State "); Serial.println(packetbuffer[2]);
           state = 3;
           previousBleState = 3; // is this needed?????                
         }else{
@@ -228,8 +234,7 @@ void loop() {
       break;
     case 3:
       if(millis() - countDown > IDLE_TIMEOUT) {
-       // state = 0;
-       // bleWrite(0);            
+        Serial.println("State 3. Timed out. Moving to State 0");
        resetState();
         // Reset
         previouslyTouched = false; 
@@ -240,11 +245,13 @@ void loop() {
       }
       if(isTouched && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
         Serial.println("Reconnecting...");
+        Serial.println("State 3. Button pushed. The device that initiated a disconnection has reconnected. Moving to State 2");
         state = 2;
         bleWrite(2);
         previouslyTouched = true;            
       } else if( blePacketLength != 0 ) {
         if(packetbuffer[2] == 2){
+          Serial.print("State 3. Received BLE. Moving to State "); Serial.println(packetbuffer[2]);
           state = 2;
           previousBleState = 2; // is this needed?????                
         }else{
@@ -281,6 +288,8 @@ void handleEvent(AceButton* /* button */, uint8_t eventType,
 // Clean house
 void resetState(){
   state = 0;
+  previousBleState = 0;
+  previouslyTouched = false;
   makingCall = false;
   bleWrite(state);
 }
