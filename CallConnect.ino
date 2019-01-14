@@ -15,8 +15,8 @@ using namespace ace_button;
 #define BRIGHTNESS      30 // Max brightness of NeoPixels
 #define BLE_CHECK_INTERVAL  300 // Time interval for checking ble messages
 #define BUTTON_DEBOUNCE 50  // Removes button noise
-#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
-//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
+//#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle_upstairs"
+#define DEVICE_NAME     "AT+GAPDEVNAME=TouchLightsBle"
 #define PAYLOAD_LENGTH  4   // Array size of BLE payload
 bool makingCall = false;
 #define IDLE_TIMEOUT    5000   // Milliseconds that there can be no touch or ble input before reverting to idle state
@@ -239,10 +239,19 @@ void loop() {
         previousBleState = 0;       
       }
       if(isTouched && previouslyTouched == false){  // If we took our hand off but put it back on in under the time limit, re-connect
+        Serial.println("Reconnecting...");
         state = 2;
         bleWrite(2);
         previouslyTouched = true;            
-      }
+      } else if( blePacketLength != 0 ) {
+        if(packetbuffer[2] == 2){
+          state = 2;
+          previousBleState = 2; // is this needed?????                
+        }else{
+            Serial.print("Expected payload 2 but got "); Serial.println(packetbuffer[2]);
+            resetState();
+        }
+      } 
       break; 
     default:
       resetState();
